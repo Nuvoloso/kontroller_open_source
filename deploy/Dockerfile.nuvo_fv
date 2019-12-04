@@ -1,0 +1,5 @@
+FROM ubuntu:18.04
+WORKDIR /root
+COPY deploy/bin/nuvo deploy/nuvo_fv/nuvo_installer.sh /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nuvo /opt/nuvoloso/bin/nuvo_installer.sh
+# This image is meant to be used as an initContainer

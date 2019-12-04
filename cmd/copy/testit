@@ -1,0 +1,524 @@
+#!/bin/bash
+# Copyright 2019 Tad Lebeck
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+lunsize=100
+datadir=/tmp
+psdir=${datadir}/myprotstore1
+lun=${datadir}/lun
+
+vs_name=MyVolume
+
+aws_bucket=$AWS_BUCKET
+aws_region=$AWS_REGION
+aws_access_key_id=$AWS_ACCESS_KEY_ID
+aws_secret_access_key=$AWS_SECRET_ACCESS_KEY
+
+pass_phrase="This is my pass phrase"
+
+cascadebucket=$aws_bucket
+cascaderegion=$aws_region
+
+snap0=`uuidgen`
+snap1=`uuidgen`
+
+domain=FakeDomainName
+domain2=FakeDomainName2
+
+google_bucket=$GOOGLE_BUCKET
+azure_bucket=$AZURE_BUCKET
+
+google_cred_file=/tmp/gcf.$$
+
+cat $GOOGLE_APPLICATION_CREDENTIALS | tr '\n' ' ' | sed 's/\\n/\\\\n/g' | sed 's/\"/\\\"/g' > $google_cred_file
+
+if [ -z $AZURE_STORAGE_ACCOUNT ] || [ -z $AZURE_STORAGE_ACCESS_KEY ] ; then
+    echo "AZURE_STORAGE_ACCOUNT and AZURE_STORAGE_ACCESS_KEY environment variables must be set for this test to work"
+    exit
+fi
+
+if [ -z $GOOGLE_APPLICATION_CREDENTIALS ] ; then
+    echo "GOOGLE_APPLICATION_CREDENTIALS environment variable must be set for this test to work"
+    exit
+fi
+
+thisdir=`pwd`
+prog=./`basename $thisdir`
+
+function message {
+    _count=`echo $* | wc -c`
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+    echo $*
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+}
+function random {
+    echo $(( $RANDOM % $1 ))
+}
+
+function writerandom {
+    _lun=$1
+    block=`random ${lunsize}`
+    echo "Writing LUN $_lun at block $block"
+    dd if=/dev/urandom of=$_lun bs=1M seek=$block count=1 conv=notrunc > /dev/null 2>&1
+}
+
+function assert {
+    local _rc=$1
+    local _res=$2
+    if [ $_rc -ne 0 ] ; then
+        echo "Aborting due to error"
+        echo "Args:"
+        cat argFile
+        echo "Results:"
+        cat $_res
+        echo ""
+        exit $1
+    fi
+    grep -q "\"Description\":\"\"" $_res
+
+    if [ "$?" != "0" ] ; then
+        echo "Aborting due to error"
+        echo "Args:"
+        cat argFile
+        echo "Results:"
+        cat $_res
+        echo ""
+        exit $1
+    fi
+}
+
+function run_prog {
+    cat argFile
+    set -x
+    $prog -args argFile -results /tmp/res
+    rc=$?
+    set +x
+    assert $rc /tmp/res
+
+    echo "Results"
+    cat /tmp/res
+    echo
+    #rm argFile
+    rm /tmp/res
+}
+
+#########################################
+# Assistance writing JSON configuration #
+#########################################
+
+# File_json Filename
+function File_json {
+echo "\"File\":{\"FileName\":\"$1\", \"DestPreZeroed\":$2}"
+}
+
+# Dir_json Directory PSName Volume Base Incr ""
+function Dir_json {
+echo "\"Dir\":{\"Directory\":\"$1\",\"Domain\":\"$2\",\"Base\":\"$3\",\"Incr\":\"$4\",\"PassPhrase\":\"$5\"}"
+}
+
+# Nuvo_json Volume Base Incr Size Server ""
+function Nuvo_json {
+echo "\"Nuvo\":{\"Volume\":\"$1\",\"Base\":\"$2\",\"Incr\":\"$3\",\"Size\":$4,\"Server\":\"$5\", \"DestPreZeroed\":$6}"
+}
+
+# Google_json BucketName PSName Volume Base Incr ""
+function Google_json {
+echo "\"Google\":{\"BucketName\":\"$1\",\"Domain\":\"$2\",\"Base\":\"$3\",\"Incr\":\"$4\", \"PassPhrase\": \"$5\", \"Cred\": \"`cat $google_cred_file`\"}"
+}
+
+# S3_json BucketName Region AccessKeyID SecretAccessKey Base Incr
+function S3_json {
+echo "\"S3\":{\"BucketName\":\"$1\",\"Region\":\"$2\",\"AccessKeyID\":\"$3\",\"SecretAccessKey\":\"$4\",\"Base\":\"$5\",\"Incr\":\"$6\", \"PassPhrase\": \"$pass_phrase\", \"Domain\":\"$domain\"}"
+}
+
+# Azure_json BucketName PSName Volume Base Incr ""
+function Azure_json {
+echo "\"Azure\":{\"BucketName\":\"$1\",\"Domain\":\"$2\",\"Base\":\"$3\",\"Incr\":\"$4\", \"PassPhrase\": \"$5\"}"
+}
+
+function write_json {
+    src_type=$1
+    src_arg1=$2 ; src_arg2=$3 ; src_arg3=$4 ; src_arg4=$5 ; src_arg5=$6 ; src_arg6=$7
+    dst_type=$8 ;
+    dst_arg1=$9 ; dst_arg2=${10} ; dst_arg3=${11} ; dst_arg4=${12} ; dst_arg5=${13} ; dst_arg6=${14}
+
+    echo "{"
+    echo "\"ProgressFileName\": \""/tmp/progress_${src_type}_to_${dst_type}"\","
+    echo "\"NumThreads\": 10,"
+
+    echo "\"SrcType\": \""${src_type}"\","
+
+    echo "\"SrcArgs\": {"
+    ${src_type}_json "$src_arg1" "$src_arg2" "$src_arg3" "$src_arg4" "$src_arg5" "$src_arg6"
+    echo "},"
+
+    echo "\"DstType\": \""${dst_type}"\","
+
+    echo "\"DstArgs\": {"
+    ${dst_type}_json "$dst_arg1" "$dst_arg2" "$dst_arg3" "$dst_arg4" "$dst_arg5" "$dst_arg6"
+    echo "}"
+
+    echo "}"
+}
+
+# this is for debugging of nested json
+if [ "false" = "true" ] ; then
+    input=/tmp/infile.$$
+    output=/tmp/outfile.$$
+
+    echo
+    echo "Credentials"
+    cat $GOOGLE_APPLICATION_CREDENTIALS > $output ; cat $output ; mv $output $input
+
+    echo
+    echo "newlines removed"
+    cat $input | tr '\n' ' ' > $output ; cat $output ; mv $output $input
+
+    echo
+    echo "newlines escaped"
+    cat $input | sed 's/\\n/\\\\n/g' > $output ; cat $output ; mv $output $input
+
+    echo
+    echo "quotes escaped"
+    cat $input | sed 's/\"/\\\"/g' > $output ; cat $output ; mv $output $input
+
+    echo
+    google_cred=`cat $input`
+
+    dd if=/dev/urandom of=$lun bs=1M count=$lunsize
+
+    cat $GOOGLE_APPLICATION_CREDENTIALS | tr '\n' ' ' | sed 's/\\n/\\\\n/g' | sed 's/\"/\\\"/g' > $google_cred_file
+    write_json File $lun false "" "" "" "" Google ${google_bucket} $domain "" $snap0 "$pass_phrase" "" > argFile
+    run_prog
+
+    echo "Quiting early for testing"
+    exit
+fi
+
+############
+# Clean Up #
+############
+
+message "Cleaning out the Old Extent Stores"
+set -x
+rm -rf ${psdir}
+set +x
+
+########################
+# Create Simulated LUN #
+########################
+
+# message "Creating random content lun"
+# dd if=/dev/urandom of=$lun bs=1M count=$lunsize
+
+message "Creating random content lun"
+set -x
+dd if=/dev/zero of=$lun bs=1M count=$lunsize > /dev/null 2>&1
+set +x
+
+message "Writing a little Random data to the lun"
+count=$(( $lunsize >> 4 )) # 6%
+if [ $count -eq 0 ] ; then
+    count=1
+fi
+
+for i in `seq 1 $count` ; do
+    writerandom $lun
+done
+
+##############################################################
+# Setup Base and Incremental Snapshots in Directory Endpoint #
+##############################################################
+
+message "file -> directory domain snap snap0"
+write_json File $lun false "" "" "" "" Dir ${psdir} $domain "" $snap0 "$pass_phrase" "" > argFile
+run_prog
+
+message Copy original version for later
+saved_orig_lun=/tmp/${snap0}_lun
+rm -f $saved_orig_lun
+echo dd if=${lun} of=$saved_orig_lun
+dd if=${lun} of=$saved_orig_lun
+
+message "Writing Random data to the lun"
+count=$(( $lunsize >> 3 )) # 12%
+for i in `seq 1 $count` ; do
+    writerandom $lun
+done
+
+message "file -> dir PS1 snap1"
+write_json File $lun false "" "" "" "" Dir ${psdir} $domain $snap0 $snap1 "$pass_phrase" "" > argFile
+run_prog
+
+##################################
+# Same endpoint different domain #
+##################################
+
+write_json Dir ${psdir} $domain "" $snap0 "$pass_phrase" "" Dir ${psdir} $domain2 "" $snap0 "" "" > argFile
+run_prog
+
+write_json Dir ${psdir} $domain $snap0 $snap1 "$pass_phrase" "" Dir ${psdir} $domain2 $snap0 $snap1 "" "" > argFile
+run_prog
+
+#########################################
+# Incremental Restore to from directory #
+#########################################
+
+message "Creating restore destination"
+rlun=${lun}_restoredir
+rm -f $rlun
+
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "dir PS1 0,snap1 -> restore lun (base snap restore)"
+write_json Dir ${psdir} $domain "" $snap0 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing restore with the first snapshot lun image"
+diff ${rlun} ${saved_orig_lun}
+if [ "$?" = "0" ] ; then
+    echo "First snapshot and Restored LUNs Match"
+else
+    echo Difference Found
+    exit
+fi
+
+message "dir PS2 snap0,snap1 -> restore lun (incr snap restore)"
+write_json Dir ${psdir} $domain $snap0 $snap1 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing Post modification Lun and the incrementally restored lun"
+diff ${lun} ${rlun}
+
+if [ "$?" = "0" ] ; then
+    echo "Original and Restored LUNs Match"
+    rm ${rlun}
+else
+    echo Difference Found
+    exit
+fi
+
+##############
+# S3 Testing #
+##############
+
+message "dir PS1 0,snap0 -> S3 PS1 (base update to S3)"
+write_json Dir ${psdir} $domain "" $snap0 "$pass_phrase" "" S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap0 > argFile
+run_prog
+
+message "dir PS1 snap0,snap1 -> S3 PS1 (incremental update to S3)"
+write_json Dir ${psdir} $domain $snap0 $snap1 "$pass_phrase" "" S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} $snap0 $snap1 > argFile
+run_prog
+
+message "Creating restore lun"
+rlun=${lun}_restores3
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "S3 all data -> file (Restoring from cascaded S3 extent store)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1 File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing Combined restore from S3 against original LUN"
+diff ${lun} ${rlun}
+rc=$?
+
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo Difference Found
+    exit
+fi
+
+##################
+# Google Testing #
+##################
+
+message "S3 snap0 -> Google snap0 (base update to Google)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1 Google ${google_bucket} $domain "" $snap0 "$pass_phrase" "" > argFile
+run_prog
+
+message "S3 incremental -> Google PS1 incremental (incremental update to Google)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} $snap0 $snap1 Google ${google_bucket} $domain $snap0 $snap1 "$pass_phrase" "" > argFile
+run_prog
+
+message "Creating restore lun"
+rlun=${lun}_restoreg
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "Google all data -> file (Restoring from Google extent store)"
+write_json Google ${google_bucket} $domain "" $snap1 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+mv argFile googleArgs
+
+message "Diffing restore from Google against original LUN"
+diff ${lun} ${rlun}
+
+rc=$?
+
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo "Difference found"
+    exit
+fi
+
+#################
+# Azure Testing #
+#################
+
+message "S3 snap0 -> Azure PS1 snap0 (base update to Azure)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap0 Azure ${azure_bucket} $domain "" $snap0 "$pass_phrase" "" > argFile
+run_prog
+
+message "S3 incremental -> Azure PS1 incremental (incremental update to Azure)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} $snap0 $snap1 Azure ${azure_bucket} $domain $snap0 $snap1 "$pass_phrase" "" > argFile
+run_prog
+
+message "Creating restore lun"
+rlun=${lun}_restoreaz
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "Azure first snapshot -> file (Restoring first snapshot from Azure extent store)"
+write_json Azure ${azure_bucket} $domain "" $snap0 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+diff ${rlun} ${saved_orig_lun}
+rc=$?
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo "Difference found"
+    exit
+fi
+
+message "Creating restore lun"
+rlun=${lun}_restoreaz
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "Azure all data -> file (Restoring from Azure extent store)"
+write_json Azure ${azure_bucket} $domain "" $snap1 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing restore from Azure against original LUN"
+diff ${lun} ${rlun}
+rm -f $rlun
+rc=$?
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo "Difference found"
+    exit
+fi
+
+##################
+# Google Testing #
+##################
+
+message "Azure snap0 -> Google PS1 snap0 (base update to Google)"
+
+write_json Azure ${azure_bucket} $domain  "" $snap1 "$pass_phrase" ""  Google ${google_bucket} $domain "" $snap0 "$pass_phrase" "" > argFile
+run_prog
+
+message "Azure incremental -> Google PS1 incremental (incremental update to Google)"
+write_json Azure ${azure_bucket} $domain $snap0 $snap1 "$pass_phrase" "" Google ${google_bucket} $domain $snap0 $snap1 "$pass_phrase" "" > argFile
+run_prog
+
+message "Creating restore lun"
+rlun=${lun}_restoreg
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "Google all data -> file (Restoring from Google extent store)"
+write_json Google ${google_bucket} $domain "" $snap1 "$pass_phrase" "" File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing restore from Google against original LUN"
+diff ${lun} ${rlun}
+
+rc=$?
+
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo "Difference found"
+    exit
+fi
+
+####################################################
+# Cascade from S3 to second Extent Store on Google #
+####################################################
+
+message "S3 PS1 0,snap0 -> Google PS2 (Full cascade to Google)"
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1 Google ${google_bucket} $domain "" $snap1 "$pass_phrase" "" > argFile
+run_prog
+
+message "Creating restore lun"
+rlun=${lun}_restore2
+rm -f $rlun
+set -x
+dd if=/dev/zero of=${rlun} bs=1M seek=$(( $lunsize - 1 )) count=1 > /dev/null 2>&1
+set +x
+
+message "S3 all data -> file (Restoring from cascaded S3 extent store)"
+write_json S3 ${cascadebucket} ${cascaderegion} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1 File ${rlun} true "" "" "" "" > argFile
+run_prog
+
+message "Diffing Combined restore from S3 against original LUN"
+diff ${lun} ${rlun}
+rc=$?
+
+if [ "$rc" = "0" ] ; then
+    echo No Difference, Passed
+    rm ${rlun}
+else
+    echo Difference Found
+    exit
+fi
+
+############
+# Clean Up #
+############
+
+#rm -rf ${psdir}
+rm -f ${saved_orig_lun}
+rm $lun
+rm -f /tmp/progress_*_to_*

@@ -1,0 +1,57 @@
+{
+  "state": "PUBLISHED",
+  "description": "Technical Applications: large amounts of data held in many small files, with a need for high-throughput processing",
+  "name": "Technical Applications",
+  "ioProfile": {
+    "ioPattern": {
+      "name": "sequential",
+      "minSizeBytesAvg" : 16384,
+      "maxSizeBytesAvg": 65536
+    },
+    "readWriteMix": {
+      "name": "read-write",
+      "minReadPercent": 30,
+      "maxReadPercent": 70
+    }
+  },
+  "slos": {
+    "Response Time Average": {
+      "kind": "DURATION",
+      "value": "8ms",
+      "immutable": true
+    },
+    "Response Time Maximum": {
+      "kind": "DURATION",
+      "value": "50ms",
+      "immutable": true
+    },
+    "Availability": {
+      "kind": "PERCENTAGE",
+      "value": "99.999%",
+      "immutable": true
+    },
+    "Security": {
+      "kind": "STRING",
+      "value": "Encrypted",
+      "immutable": true
+    },
+    "RPO": {
+      "kind": "DURATION",
+      "value": "4h",
+      "immutable": true
+    },
+    "Retention": {
+      "kind": "DURATION",
+      "value": "90d",
+      "immutable": true
+    }
+  },
+  "provisioningUnit": {
+    "IOPS": 3,
+    "Throughput": 0
+  },
+  "volumeSeriesMinMaxSize": {
+    "minSizeBytes": 1073741824,
+    "maxSizeBytes": 70368744177664
+  }
+}

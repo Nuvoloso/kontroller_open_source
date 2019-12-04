@@ -1,0 +1,12 @@
+{
+    "name": "Account Admin",
+    "capabilities": {
+        "accountFetchAllRoles": true,
+        "accountUpdate": true,
+        "auditLogAnnotate": true,
+        "cspDomainUsage": true,
+        "protectionDomainManagement": true,
+        "userManagement": true,
+        "volumeSeriesOwner": true
+    }
+}

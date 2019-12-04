@@ -1,0 +1,15 @@
+{
+    "name": "Tenant Admin",
+    "capabilities": {
+        "accountFetchAllRoles": true,
+        "accountUpdate": true,
+        "auditLogAnnotate": true,
+        "cspDomainManagement": true,
+        "cspDomainUsage": true,
+        "manageNormalAccounts": true,
+        "protectionDomainManagement": true,
+        "userManagement": true,
+        "volumeSeriesFetch": true,
+        "volumeSeriesOwner": true
+    }
+}

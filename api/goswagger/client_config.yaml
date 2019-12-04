@@ -1,0 +1,36 @@
+# Copyright 2019 Tad Lebeck
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# See https://github.com/go-swagger/go-swagger/blob/master/generator/shared.go
+
+layout:
+  application:
+    - name: facade
+      source: asset:clientFacade
+      target: "{{ joinFilePath .Target .ClientPackage }}"
+      file_name: "{{ .Name }}Client.go"
+  operations:
+    - name: parameters
+      source: "asset:clientParameter"
+      target: "{{ joinFilePath .Target .ClientPackage .Package }}"
+      file_name: "{{ (snakize (pascalize .Name)) }}_parameters.go"
+    - name: responses
+      source: ./api/goswagger/client_responses.gotmpl
+      target: "{{ joinFilePath .Target .ClientPackage .Package }}"
+      file_name: "{{ (snakize (pascalize .Name)) }}_responses.go"
+  operation_groups:
+    - name: client
+      source: asset:clientClient
+      target: "{{ joinFilePath .Target .ClientPackage .Name }}"
+      file_name: "{{ (snakize (pascalize .Name)) }}_client.go"

@@ -1,0 +1,8 @@
+{
+    "name": "Account User",
+    "capabilities": {
+        "accountFetchOwnRole": true,
+        "cspDomainUsage": true,
+        "volumeSeriesOwner": true
+    }
+}

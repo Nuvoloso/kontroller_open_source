@@ -1,0 +1,8 @@
+{
+  "matchers": [
+    { "methodPattern": "PATCH" },
+    { "methodPattern": "POST", "uriPattern": "metrics/storage" },
+    { "methodPattern": "DELETE", "scopePattern":"foo" }
+  ],
+  "name": "goodArgs"
+}

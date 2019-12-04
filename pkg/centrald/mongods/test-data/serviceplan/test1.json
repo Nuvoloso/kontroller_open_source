@@ -1,0 +1,32 @@
+{
+  "state": "PUBLISHED",
+  "description": "OLTP Data",
+  "name": "test",
+  "ioProfile": {
+    "ioPattern": {
+      "name": "streaming",
+      "minSizeBytesAvg": 262144,
+      "maxSizeBytesAvg": 1048576
+    },
+    "readWriteMix": {
+      "name": "write-mostly",
+      "minReadPercent": 0,
+      "maxReadPercent": 30
+    }
+  },
+  "slos": {
+    "Response Time Average": {
+      "kind": "DURATION",
+      "value": "5ms",
+      "immutable": true
+    }
+  },
+  "provisioningUnit": {
+    "IOPS": 0,
+    "Throughput": 3000000
+  },
+  "volumeSeriesMinMaxSize": {
+    "minSizeBytes": 1073741824,
+    "maxSizeBytes": 70368744177664
+  }
+}

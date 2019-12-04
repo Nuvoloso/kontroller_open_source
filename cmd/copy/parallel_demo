@@ -1,0 +1,278 @@
+#!/bin/bash
+# Copyright 2019 Tad Lebeck
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+datadir=/tmp
+lun=${datadir}/original_lun
+saved_orig_lun=${datadir}/saved_orig_lun
+
+# size in Megabytes
+lunsize=100
+
+#snapshot name to use
+snap0_name=snap0$$
+snap1_name=snap1$$
+
+# S3 Configuration
+aws_bucket=nuvomike20180423
+aws_region="us-west-1"
+aws_access_key_id="AKIAJLZJUENAUYMHBYVA"
+aws_secret_access_key="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"
+
+# Azure Configuration
+azure_bucket=bucket
+vs_name=MyVolume
+
+# Google Configuration
+google_bucket=nuvomike06072018
+
+# Restore LUNs
+s3_orig_restore=${datadir}/s3_orig_restored_lun
+s3_incr_restore=${datadir}/s3_incr_restored_lun
+azure_restore=${datadir}/azure_restored_lun
+google_restore=${datadir}/google_restored_lun
+
+function message {
+    echo
+    echo "Hit Enter to continue>" ; read ch
+
+    _count=`echo $* | wc -c`
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+    echo $*
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+}
+
+#########################################
+# Assistance writing JSON configuration #
+#########################################
+
+# File_json Filename
+function File_json {
+echo "\"File\":{\"FileName\":\"$1\"}"
+}
+
+# Dir_json Directory PSName Volume Base Incr ""
+function Dir_json {
+echo "\"Dir\":{\"Directory\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# Null_json "" "" "" "" "" ""
+function Null_json {
+echo "\"Null\":{}"
+}
+
+# Nuvo_json Volume Base Incr Size Server ""
+function Nuvo_json {
+echo "\"Nuvo\":{\"Volume\":\"$1\",\"Base\":\"$2\",\"Incr\":\"$3\",\"Size\":$4,\"Server\":\"$5\"}"
+}
+
+# Google_json BucketName PSName Volume Base Incr ""
+function Google_json {
+echo "\"Google\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# S3_json BucketName Region AccessKeyID SecretAccessKey Base Incr
+function S3_json {
+echo "\"S3\":{\"BucketName\":\"$1\",\"Region\":\"$2\",\"AccessKeyID\":\"$3\",\"SecretAccessKey\":\"$4\",\"Base\":\"$5\",\"Incr\":\"$6\"}"
+}
+
+# Azure_json BucketName PSName Volume Base Incr ""
+function Azure_json {
+echo "\"Azure\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+function write_json {
+    local src_type=$1
+    local src_arg1=$2 ; local src_arg2=$3 ; local src_arg3=$4 ; local src_arg4=$5 ; local src_arg5=$6 ; local src_arg6=$7
+    local dst_type=$8 ;
+    local dst_arg1=$9 ; local dst_arg2=${10} ; local dst_arg3=${11} ; local dst_arg4=${12} ; local dst_arg5=${13} ; local dst_arg6=${14}
+
+    echo "{"
+
+    echo "\"SrcType\": \""${src_type}"\","
+
+    echo "\"SrcArgs\": {"
+    ${src_type}_json "$src_arg1" "$src_arg2" "$src_arg3" "$src_arg4" "$src_arg5" "$src_arg6"
+    echo "},"
+
+    echo "\"DstType\": \""${dst_type}"\","
+
+    echo "\"DstArgs\": {"
+    ${dst_type}_json "$dst_arg1" "$dst_arg2" "$dst_arg3" "$dst_arg4" "$dst_arg5" "$dst_arg6"
+    echo "}"
+
+    echo "}"
+}
+
+function value_from_json {
+    echo `jq .$1 < $2`
+}
+
+function assert {
+    local _results=$1
+    local _args=$1
+    local _err=`value_from_json Error.Description < $_results`
+    if [ "$_err" != "" ] ; then
+        echo "Aborting due to error"
+        echo "Args:"
+        cat $_args
+        exit 1
+    fi
+}
+
+# do_copy [ <argfile> <resfile> <thread count> ]
+function do_copy {
+    local _args=${datadir}/argFile
+    if [ "$1" != "" ] ; then
+        _args=$1
+        shift
+    fi
+    _res=${datadir}/res
+    if [ "$1" != "" ] ; then
+        _res=$1
+        shift
+    fi
+    _thread_count=20
+    if [ "$1" != "" ] ; then
+        _thread_count=$1
+        shift
+    fi
+
+    echo ./copy -threads ${_thread_count} -args $_args -results $_res
+    ./copy -threads ${_thread_count} -args $_args -results $_res
+    rc=$?
+    assert $_res $_args
+
+    echo "Results"
+    jq < $_res
+
+    BytesChanged=`value_from_json Stats.BytesChanged $_res`
+    BytesTransferred=`value_from_json Stats.BytesTransferred $_res`
+    DestBytesDeduped=`value_from_json Stats.DestBytesDeduped $_res`
+
+    echo "Megabytes Changed $(( $BytesChanged / (1024 * 1024) ))"
+    MegaBytesTransferred=$(( $BytesTransferred / (1024 * 1024) ))
+    echo "Megabytes Transferred $MegaBytesTransferred"
+    echo "Megabytes Deduped $(( $DestBytesDeduped / (1024 * 1024) ))"
+
+    rm $_res
+    rm $_args
+}
+
+function random {
+    echo $(( $RANDOM % $1 ))
+}
+
+function writerandom {
+    local _lun=$1
+    local _block=`random ${lunsize}`
+    echo "Writing LUN $_lun at block $_block"
+    dd if=/dev/urandom of=$_lun bs=1M seek=$_block count=1 conv=notrunc > /dev/null 2>&1
+}
+
+function make_restore_lun {
+    local _rlun=$1
+    echo dd if=/dev/zero of=${_rlun} bs=1M seek=$(( $lunsize - 1 )) count=1
+    dd if=/dev/zero of=${_rlun} bs=1M seek=$(( $lunsize - 1 )) count=1
+}
+
+function compare_luns {
+    diff $1 $2
+    rc=$?
+
+    if [ "$rc" = "0" ] ; then
+        echo LUNs $1 and $2 No Difference, Passed
+    else
+        echo LUNs $1 and $2 Difference Found
+    fi
+}
+
+#################
+# Start of Demo #
+#################
+
+echo Start Demo
+
+message Create LUN \(100M, could be bigger\)
+echo dd if=/dev/zero of=$lun bs=1M count=$lunsize
+dd if=/dev/zero of=$lun bs=1M count=$lunsize
+
+message Initial backup to S3 \(all zeros\)
+write_json File ${lun} "" "" "" "" "" S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap0_name > ${datadir}/argFile
+do_copy ${datadir}/argFile ${datadir}/res 1
+
+message Copy Original version for later
+echo dd if=${lun} of=$saved_orig_lun
+dd if=${lun} of=$saved_orig_lun
+
+message Write Random Data \(12\%\)
+count=$(( $lunsize >> 3 )) # 12%
+for i in `seq 1 $count` ; do
+    writerandom $lun
+done
+
+message incremental backup to S3
+write_json File ${lun} "" "" "" "" "" S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} $snap0_name $snap1_name > ${datadir}/argFile
+do_copy
+
+message Cascade Combined S3 backup to Azure
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1_name Azure ${azure_bucket} PS1 ${vs_name} "" $snap1_name "" > ${datadir}/argFile
+do_copy
+
+message Cascade Azure to Google Cloud
+write_json Azure ${azure_bucket} PS1 ${vs_name} "" $snap1_name "" Google ${google_bucket} PS1 ${vs_name} "" $snap1_name "" > ${datadir}/argFile
+do_copy
+
+message Create 4 restore LUNs \(S3 orig, S3 snap, Azure, Google\)
+make_restore_lun $s3_orig_restore
+make_restore_lun $s3_incr_restore
+make_restore_lun $azure_restore
+make_restore_lun $google_restore
+
+message Restore from orig snapshot S3 to one LUN
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap0_name File ${s3_orig_restore} "" "" "" "" "" > ${datadir}/S3_orig_argFile
+do_copy ${datadir}/S3_orig_argFile ${datadir}/S3_orig_results
+compare_luns ${saved_orig_lun} ${s3_orig_restore}
+echo
+
+message Restore from S3, Google and Azure simutaneously
+
+write_json S3 ${aws_bucket} ${aws_region} ${aws_access_key_id} ${aws_secret_access_key} "" $snap1_name File ${s3_incr_restore} "" "" "" "" "" > ${datadir}/S3_incr_argFile
+do_copy ${datadir}/S3_incr_argFile ${datadir}/S3_incr_results &
+echo
+
+write_json Google ${google_bucket} PS1 ${vs_name} "" $snap1_name "" File ${google_restore} "" "" "" "" "" > ${datadir}/gc_argFile
+do_copy ${datadir}/gc_argFile ${datadir}/gc_results &
+echo
+
+write_json Azure ${azure_bucket} PS1 ${vs_name} "" $snap1_name "" File ${azure_restore} "" "" "" "" "" > ${datadir}/az_argFile
+do_copy ${datadir}/az_argFile ${datadir}/az_results &
+
+wait
+message "All Restores are done"
+
+compare_luns ${lun} ${azure_restore}
+compare_luns ${lun} ${s3_incr_restore}
+compare_luns ${lun} ${google_restore}
+
+message Clean Up
+rm $s3_orig_restore $s3_incr_restore $azure_restore $google_restore $lun ${saved_orig_lun}
+

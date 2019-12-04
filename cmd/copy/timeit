@@ -1,0 +1,140 @@
+#!/bin/bash
+# Copyright 2019 Tad Lebeck
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+lunsize=500
+datadir=/tmp
+es1dir=${datadir}/extentstore1
+es2dir=${datadir}/extentstore2
+lun=${datadir}/lun
+
+thisdir=`pwd`
+prog=./`basename $thisdir`
+
+function message {
+    _count=`echo $* | wc -c`
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+    echo $*
+    for c in `seq 2 $_count` ; do
+        echo -n "="
+    done
+    echo ""
+}
+function random {
+    echo $(( $RANDOM % $1 ))
+}
+
+function writerandom {
+    _lun=$1
+    block=`random ${lunsize}`
+    echo "Writing LUN $_lun at block $block"
+    dd if=/dev/urandom of=$_lun bs=1M seek=$block count=1 conv=notrunc > /dev/null 2>&1
+}
+
+#########################################
+# Assistance writing JSON configuration #
+#########################################
+
+# File_json Filename
+function File_json {
+echo "\"File\":{\"FileName\":\"$1\"}"
+}
+
+# Dir_json Directory PSName Volume Base Incr ""
+function Dir_json {
+echo "\"Dir\":{\"Directory\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# Null_json "" "" "" "" "" ""
+function Null_json {
+echo "\"Null\":{}"
+}
+
+# Nuvo_json Volume Base Incr Size Server ""
+function Nuvo_json {
+echo "\"Nuvo\":{\"Volume\":\"$1\",\"Base\":\"$2\",\"Incr\":\"$3\",\"Size\":$4,\"Server\":\"$5\"}"
+}
+
+# Google_json BucketName PSName Volume Base Incr ""
+function Google_json {
+echo "\"Google\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# S3_json BucketName Region PSName Volume Base Incr
+function S3_json {
+echo "\"S3\":{\"BucketName\":\"$1\",\"Region\":\"$2\",\"PSName\":\"$3\",\"Volume\":\"$4\",\"Base\":\"$5\",\"Incr\":\"$6\"}"
+}
+
+# Azure_json BucketName PSName Volume Base Incr ""
+function Azure_json {
+echo "\"Azure\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+function write_json {
+    src_type=$1
+    src_arg1=$2 ; src_arg2=$3 ; src_arg3=$4 ; src_arg4=$5 ; src_arg5=$6 ; src_arg6=$7
+    dst_type=$8 ;
+    dst_arg1=$9 ; dst_arg2=${10} ; dst_arg3=${11} ; dst_arg4=${12} ; dst_arg5=${13} ; dst_arg6=${14}
+
+    echo "{"
+
+    echo "\"SrcType\": \""${src_type}"\","
+
+    echo "\"SrcArgs\": {"
+    ${src_type}_json "$src_arg1" "$src_arg2" "$src_arg3" "$src_arg4" "$src_arg5" "$src_arg6"
+    echo "},"
+
+    echo "\"DstType\": \""${dst_type}"\","
+
+    echo "\"DstArgs\": {"
+    ${dst_type}_json "$dst_arg1" "$dst_arg2" "$dst_arg3" "$dst_arg4" "$dst_arg5" "$dst_arg6"
+    echo "}"
+
+    echo "}"
+}
+
+message "Building"
+go build
+
+if [ "$?" = 0 ] ; then
+    echo "Build Succeeded"
+else
+    echo "Build Failed"
+    exit
+fi
+
+message "Creating random out content lun"
+set -x
+dd if=/dev/urandom of=$lun bs=1M count=$lunsize > /dev/null 2>&1
+set +x
+
+for t in `seq 1 50` ; do
+    message "Cleaning out the Old Extent Stores"
+    set -x
+    rm -rf ${es1dir}
+    mkdir -p ${es1dir}/data
+    set +x
+
+    message "file -> directory ES1 snap base"
+    write_json File $lun "" "" "" "" "" Dir ${es1dir} ES1 $lun "" base "" > argFile
+    set -x
+    time $prog -args argFile
+    set +x
+done
+rm argFile
+

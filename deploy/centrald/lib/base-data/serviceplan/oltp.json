@@ -1,0 +1,57 @@
+{
+  "state": "PUBLISHED",
+  "description": "OLTP: Online Transactional Processing Databases",
+  "name": "OLTP",
+  "ioProfile": {
+    "ioPattern": {
+      "name": "random",
+      "minSizeBytesAvg" : 0,
+      "maxSizeBytesAvg": 16384
+    },
+    "readWriteMix": {
+      "name": "read-write",
+      "minReadPercent": 30,
+      "maxReadPercent": 70
+    }
+  },
+  "slos": {
+    "Response Time Average": {
+      "kind": "DURATION",
+      "value": "5ms",
+      "immutable": true
+    },
+    "Response Time Maximum": {
+      "kind": "DURATION",
+      "value": "10ms",
+      "immutable": true
+    },
+    "Availability": {
+      "kind": "PERCENTAGE",
+      "value": "99.999%",
+      "immutable": true
+    },
+    "Security": {
+      "kind": "STRING",
+      "value": "Encrypted",
+      "immutable": true
+    },
+    "RPO": {
+      "kind": "DURATION",
+      "value": "4h",
+      "immutable": true
+    },
+    "Retention": {
+      "kind": "DURATION",
+      "value": "90d",
+      "immutable": true
+    }
+  },
+  "provisioningUnit": {
+    "IOPS": 6,
+    "Throughput": 0
+  },
+  "volumeSeriesMinMaxSize": {
+    "minSizeBytes": 1073741824,
+    "maxSizeBytes": 70368744177664
+  }
+}

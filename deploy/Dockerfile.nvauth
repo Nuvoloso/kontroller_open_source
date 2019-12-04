@@ -1,0 +1,8 @@
+FROM ubuntu:18.04
+WORKDIR /root
+RUN apt-get update && apt-get install -y ca-certificates less
+COPY deploy/bin/nvauth /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nvauth
+COPY deploy/auth/etc/nuvoloso/nvauth.ini /etc/nuvoloso/
+EXPOSE 5555
+ENTRYPOINT [ "/opt/nuvoloso/bin/nvauth" ]

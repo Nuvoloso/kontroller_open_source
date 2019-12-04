@@ -1,0 +1,8 @@
+FROM ubuntu:18.04
+WORKDIR /root
+RUN apt-get update && apt-get install -y ca-certificates less
+COPY deploy/bin/nvclusterd deploy/bin/copy deploy/bin/nvclmd /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nvclusterd /opt/nuvoloso/bin/copy /opt/nuvoloso/bin/nvclmd && mkdir -p /var/run/nuvoloso
+COPY deploy/clusterd/etc/nuvoloso/nvclusterd.ini /etc/nuvoloso/
+EXPOSE 7443
+ENTRYPOINT [ "/opt/nuvoloso/bin/nvclusterd" ]

@@ -1,0 +1,100 @@
+#!/bin/bash
+# Copyright 2019 Tad Lebeck
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+me=`basename $0`
+
+# File_json Filename
+function File_json {
+echo "\"File\":{\"FileName\":\"$1\"}"
+}
+
+# Dir_json Directory PSName Volume Base Incr ""
+function Dir_json {
+echo "\"Dir\":{\"Directory\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# Null_json "" "" "" "" "" ""
+function Null_json {
+echo "\"Null\":{}"
+}
+
+# Nuvo_json Volume Base Incr Size Server ""
+function Nuvo_json {
+echo "\"Nuvo\":{\"Volume\":\"$1\",\"Base\":\"$2\",\"Incr\":\"$3\",\"Size\":$4,\"Server\":\"$5\"}"
+}
+
+# Google_json BucketName PSName Volume Base Incr ""
+function Google_json {
+echo "\"Google\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+# S3_json BucketName Region AccessKeyID SecretAccessKey Base Incr
+function S3_json {
+echo "\"S3\":{\"BucketName\":\"$1\",\"Region\":\"$2\",\"AccessKeyID\":\"$3\",\"SecretAccessKey\":\"$4\",\"Base\":\"$5\",\"Incr\":\"$6\"}"
+}
+
+# Azure_json BucketName PSName Volume Base Incr ""
+function Azure_json {
+echo "\"Azure\":{\"BucketName\":\"$1\",\"PSName\":\"$2\",\"Volume\":\"$3\",\"Base\":\"$4\",\"Incr\":\"$5\"}"
+}
+
+function _write_json_ {
+    src_type=$1
+    src_arg1=$2 ; src_arg2=$3 ; src_arg3=$4 ; src_arg4=$5 ; src_arg5=$6 ; src_arg6=$7
+    dst_type=$8 ;
+    dst_arg1=$9 ; dst_arg2=${10} ; dst_arg3=${11} ; dst_arg4=${12} ; dst_arg5=${13} ; dst_arg6=${14}
+
+    echo "{"
+
+    echo "\"SrcType\": \""${src_type}"\","
+
+    echo "\"SrcArgs\": {"
+    ${src_type}_json "$src_arg1" "$src_arg2" "$src_arg3" "$src_arg4" "$src_arg5" "$src_arg6"
+    echo "},"
+
+    echo "\"DstType\": \""${dst_type}"\","
+
+    echo "\"DstArgs\": {"
+    ${dst_type}_json "$dst_arg1" "$dst_arg2" "$dst_arg3" "$dst_arg4" "$dst_arg5" "$dst_arg6"
+    echo "}"
+
+    echo "}"
+}
+
+if [ $# -ne 14 ] ; then
+    echo There are a lot of arguments to this program
+    echo "$me <SRCTYPE> <SRCARG1> <SRCARG2> <SRCARG2> <SRCARG2> <SRCARG2> <SRCARG2> <DSTTYPE> <DSTARG1> <DSTARG1> <DSTARG1> <DSTARG1> <DSTARG1> <DSTARG1>"
+    echo Where the args are different for each type of endpoint
+
+    echo File Filename \"\" \"\" \"\" \"\" \"\"
+    echo Dir Directory PSName Volume Base Incr \"\"
+    echo Null \"\" \"\" \"\" \"\" \"\" \"\"
+    echo Nuvo Volume Base Incr Size Server \"\"
+    echo Google BucketName PSName Volume Base Incr \"\"
+    echo S3 BucketName Region PSName Volume Base Incr
+    echo Azure BucketName PSName Volume Base Incr \"\"
+
+    echo ; echo Example
+    echo $me File mylunfile \"\" \"\" \"\" \"\" \"\" S3 mybucket us-west-1 PS1 myvolume basesnap incrsnap
+    echo would produce something like this:
+
+    _write_json_ File mylunfile "" "" "" "" "" S3 mybucket us-west-1 PS1 myvolume basesnap incrsnap
+
+    exit
+fi
+
+_write_json_ "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" "${13}" "${14}" "${15}" "${16}"
+

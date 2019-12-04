@@ -1,0 +1,6 @@
+FROM ubuntu:18.04
+WORKDIR /root
+RUN apt-get update && apt-get install -y ca-certificates less
+COPY deploy/bin/nv-mongo-sidecar /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nv-mongo-sidecar
+ENTRYPOINT [ "/opt/nuvoloso/bin/nv-mongo-sidecar" ]

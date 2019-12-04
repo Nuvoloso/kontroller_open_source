@@ -1,0 +1,6 @@
+FROM mongo:4
+COPY deploy/configdb/nuvo-entrypoint.sh /
+RUN chmod +x /nuvo-entrypoint.sh
+
+ENTRYPOINT ["/nuvo-entrypoint.sh"]
+CMD ["mongod"]

@@ -1,0 +1,510 @@
+{{/* Copyright Tad Lebeck 2019 */ -}}
+# Managed cluster deployment YAML template.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nuvoloso-cluster
+{{- if .ImagePullSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: customer-dockerhub-secret
+  namespace: nuvoloso-cluster
+data:
+  .dockerconfigjson: {{.ImagePullSecret}}
+type: kubernetes.io/dockerconfigjson
+{{- end}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nuvoloso-tls
+  namespace: nuvoloso-cluster
+type: Opaque
+data:
+  caCert: {{.CACert}}
+  agentdCert: {{.AgentdCert}}
+  agentdKey: {{.AgentdKey}}
+  clusterdCert: {{.ClusterdCert}}
+  clusterdKey: {{.ClusterdKey}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clusterd
+  namespace: nuvoloso-cluster
+  labels:
+    app: nuvoloso-clusterd-service
+spec:
+  ports:
+  - port: 7443
+    name: clusterd-port
+  selector:
+    app: nuvoloso-clusterd
+  type:
+    ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nuvoloso-agent-account
+  namespace: nuvoloso-cluster
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nuvoloso-cluster-account
+  namespace: nuvoloso-cluster
+---
+# Re-examine agent roles
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-agent-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+{{- if SemVerLT .ClusterVersion "1.14.0"}}
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create", "list", "watch", "delete"]
+{{- end}}
+  - apiGroups: ["csi.storage.k8s.io"]
+    resources: ["csidrivers"]
+    verbs: ["create", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get"]
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-cluster-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "update", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch", "create"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["daemonsets"]
+    verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+{{- if SemVerLT .ClusterVersion "1.14.0"}}
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["create", "list", "watch", "delete"]
+{{- end}}
+  - apiGroups: ["csi.storage.k8s.io"]
+    resources: ["csidrivers"]
+    verbs: ["create", "delete"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-agent-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: nuvoloso-agent-account
+    namespace: nuvoloso-cluster
+roleRef:
+  kind: ClusterRole
+  name: nuvoloso-agent-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-cluster-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: nuvoloso-cluster-account
+    namespace: nuvoloso-cluster
+roleRef:
+  kind: ClusterRole
+  name: nuvoloso-cluster-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+{{ $nodeDaemonSetName := "nuvoloso-node" -}}
+  # this name must be consistent with the clusterd container --node-controller-name
+  name: {{$nodeDaemonSetName}}
+  namespace: nuvoloso-cluster
+spec:
+  selector:
+    matchLabels:
+      app: nuvoloso-node
+  template:
+    metadata:
+      labels:
+        app: nuvoloso-node
+    spec:
+      serviceAccountName: nuvoloso-agent-account
+      # hostNetwork: true
+      containers:
+      - name: agentd
+        image: {{.ImagePath}}/nvagentd:{{.ImageTag}}
+        ports:
+        - containerPort: 443
+        args:
+        - "-M={{.ManagementHost}}"
+        - -D={{.CSPDomainID}}
+        - -T={{.CSPDomainType}}
+        - -S={{.SystemID}}
+        - -C={{.ClusterID}}
+        - --nuvo-port={{.NuvoPort}}
+        - --ssl-server-name=nginx.nuvoloso.com
+        - --csi-socket=$(CSI_ENDPOINT)
+        - --debug-client
+        - --debug-permit-rei
+        - --vreq.debug-permit-rei
+        - --sreq.debug-permit-rei
+        imagePullPolicy: Always
+        env:
+        - name: CLUSTERD_SSL_SERVER_NAME
+          value: clusterd.nuvoloso.com
+        - name: NUVO_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NUVO_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NUVO_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NUVO_POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: NUVO_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        - name: CSI_ENDPOINT
+          value: /csi/csi.sock
+        volumeMounts:
+        - name: tls
+          mountPath: "/etc/nuvoloso/tls"
+          readOnly: true
+        - name: nuvoloso-run
+          mountPath: /var/run/nuvoloso
+        - name: nuvoloso-local
+          mountPath: /var/local/nuvoloso
+          mountPropagation: HostToContainer
+        - name: host-devices
+          mountPath: /dev
+        - name: plugin-dir
+          mountPath: /csi
+        - name: pods-mount-dir
+          mountPath: /var/lib/kubelet
+          # needed so that any mounts setup inside this container are
+          # propagated back to the host machine.
+          mountPropagation: "Bidirectional"
+        securityContext:
+          privileged: true
+          capabilities:
+              add: ["SYS_ADMIN"]
+          allowPrivilegeEscalation: true
+      - name: csi-driver-registrar
+        image: quay.io/k8scsi/csi-node-driver-registrar:v1.1.0
+        args:
+        - "--csi-address=$(ADDRESS)"
+        - "--kubelet-registration-path=$(DRIVER_REG_SOCK_PATH)"
+        - "--v=8"
+        lifecycle:
+          preStop:
+            exec:
+              command: ["/bin/sh", "-c", "rm -rf /registration/csi.nuvoloso.com /registration/csi.nuvoloso.com-reg.sock"]
+        env:
+        - name: ADDRESS
+          value: /csi/csi.sock
+        - name: DRIVER_REG_SOCK_PATH
+          value: /var/lib/kubelet/plugins/csi.nuvoloso.com/csi.sock
+        volumeMounts:
+        - name: plugin-dir
+          mountPath: /csi
+        - name: registration-dir
+          mountPath: /registration
+      - name: nuvo
+        image: {{.ImagePath}}/nuvo:{{.ImageTag}}
+        ports:
+        - containerPort: {{.NuvoPort}}
+        # caution: --nuvo-core-dir modifies the host so use during development only
+        args:
+        - --nuvo-core-dir
+        - /var/crash
+        - --nuvo-cleanup
+        - /var/local/nuvoloso/luns
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: nuvoloso-run
+          mountPath: /var/run/nuvoloso
+        - name: nuvoloso-local
+          mountPath: /var/local/nuvoloso
+          mountPropagation: Bidirectional
+        - name: host-devices
+          mountPath: /dev
+        - name: host-crash
+          mountPath: /var/crash
+        securityContext:
+          privileged: true
+{{- if .ImagePullSecret }}
+      imagePullSecrets:
+      - name: customer-dockerhub-secret
+{{- end}}
+      volumes:
+      - name: tls
+        secret:
+          secretName: nuvoloso-tls
+      - name: nuvoloso-run
+        hostPath:
+          path: /var/run/nuvoloso
+      - name: nuvoloso-local
+        hostPath:
+          path: /var/local/nuvoloso
+      - name: host-devices
+        hostPath:
+          path: /dev
+      - name: host-crash
+        hostPath:
+          path: /var/crash
+      - name: registration-dir
+        hostPath:
+          path: /var/lib/kubelet/plugins_registry/
+          type: DirectoryOrCreate
+      - name: plugin-dir
+        hostPath:
+          path: /var/lib/kubelet/plugins/csi.nuvoloso.com/
+          type: DirectoryOrCreate
+      - name: pods-mount-dir
+        hostPath:
+          path: /var/lib/kubelet
+          type: Directory
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clusterd
+  namespace: nuvoloso-cluster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nuvoloso-clusterd
+  serviceName: clusterd
+  template:
+    metadata:
+      labels:
+        app: nuvoloso-clusterd
+    spec:
+      serviceAccountName: nuvoloso-cluster-account
+      containers:
+      - name: clusterd
+        image: {{.ImagePath}}/nvclusterd:{{.ImageTag}}
+        args:
+        - "-M={{.ManagementHost}}"
+        - -D={{.CSPDomainID}}
+        - -T={{.CSPDomainType}}
+        - -S={{.SystemID}}
+        - -C={{.ClusterID}}
+        - --ssl-server-name=nginx.nuvoloso.com
+        - --csi-socket=$(CSI_ENDPOINT)
+        - --cluster-namespace=$(NUVO_POD_NAMESPACE)
+        - --node-controller-name={{$nodeDaemonSetName}}
+        - --debug-client
+        - --debug-permit-rei
+        - --vreq.debug-permit-rei
+        env:
+        - name: NUVO_CLUSTER_NAME
+          value: "{{.ClusterName}}"
+        - name: NUVO_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NUVO_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NUVO_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NUVO_POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: CSI_ENDPOINT
+          value: /var/lib/csi/sockets/pluginproxy/csi.sock
+        ports:
+        - containerPort: 7443
+          name: clusterd-port
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: tls
+          mountPath: "/etc/nuvoloso/tls"
+          readOnly: true
+        - name: socket-dir
+          mountPath: /var/lib/csi/sockets/pluginproxy/
+{{- if SemVerLT .ClusterVersion "1.14.0"}}
+      - name: cluster-driver-registrar
+        image: quay.io/k8scsi/csi-cluster-driver-registrar:v1.0.1
+        args:
+        - "--csi-address=$(ADDRESS)"
+        - "--pod-info-mount-version=v1"
+        - "--v=8"
+        - "--driver-requires-attachment=false"
+        env:
+        - name: ADDRESS
+          value: /var/lib/csi/sockets/pluginproxy/csi.sock
+        imagePullPolicy: "Always"
+        volumeMounts:
+        - name: socket-dir
+          mountPath: /var/lib/csi/sockets/pluginproxy/
+{{- end}}
+      - name: csi-provisioner
+        image: quay.io/k8scsi/csi-provisioner:v1.0.1
+        args:
+        - "--provisioner=csi.nuvoloso.com"
+        - "--csi-address=$(ADDRESS)"
+        - "--v=5"
+        env:
+        - name: ADDRESS
+          value: /var/lib/csi/sockets/pluginproxy/csi.sock
+        imagePullPolicy: "Always"
+        volumeMounts:
+        - name: socket-dir
+          mountPath: /var/lib/csi/sockets/pluginproxy/
+      - name: csi-attacher
+        image: quay.io/k8scsi/csi-attacher:v1.0.1
+        args:
+        - "--v=5"
+        - "--csi-address=$(ADDRESS)"
+        env:
+        - name: ADDRESS
+          value: /var/lib/csi/sockets/pluginproxy/csi.sock
+        imagePullPolicy: "Always"
+        volumeMounts:
+        - name: socket-dir
+          mountPath: /var/lib/csi/sockets/pluginproxy/
+{{- if .ImagePullSecret }}
+      imagePullSecrets:
+      - name: customer-dockerhub-secret
+{{- end}}
+      volumes:
+      - name: tls
+        secret:
+          secretName: nuvoloso-tls
+      - name: socket-dir
+        emptyDir: {}
+---
+{{- if SemVerLT .ClusterVersion "1.14.0"}}
+apiVersion: apiextensions.k8s.io/v1beta1
+kind: CustomResourceDefinition
+metadata:
+  name: csinodeinfos.csi.storage.k8s.io
+  labels:
+    addonmanager.kubernetes.io/mode: Reconcile
+spec:
+  group: csi.storage.k8s.io
+  names:
+    kind: CSINodeInfo
+    plural: csinodeinfos
+  scope: Cluster
+  validation:
+    openAPIV3Schema:
+      properties:
+        spec:
+          description: Specification of CSINodeInfo
+          properties:
+            drivers:
+              description: List of CSI drivers running on the node and their specs.
+              type: array
+              items:
+                properties:
+                  name:
+                    description: The CSI driver that this object refers to.
+                    type: string
+                  nodeID:
+                    description: The node from the driver point of view.
+                    type: string
+                  topologyKeys:
+                    description: List of keys supported by the driver.
+                    items:
+                      type: string
+                    type: array
+        status:
+          description: Status of CSINodeInfo
+          properties:
+            drivers:
+              description: List of CSI drivers running on the node and their statuses.
+              type: array
+              items:
+                properties:
+                  name:
+                    description: The CSI driver that this object refers to.
+                    type: string
+                  available:
+                    description: Whether the CSI driver is installed.
+                    type: boolean
+                  volumePluginMechanism:
+                    description: Indicates to external components the required mechanism
+                      to use for any in-tree plugins replaced by this driver.
+                    pattern: in-tree|csi
+                    type: string
+  version: v1alpha1
+{{- else}}
+apiVersion: storage.k8s.io/v1beta1
+kind: CSIDriver
+metadata:
+ name: csi.nuvoloso.com
+spec:
+ podInfoOnMount: true
+ attachRequired: false
+{{- end}}

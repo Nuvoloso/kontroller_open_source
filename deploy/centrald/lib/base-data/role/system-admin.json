@@ -1,0 +1,13 @@
+{
+    "name": "System Admin",
+    "capabilities": {
+        "accountFetchAllRoles": true,
+        "accountUpdate": true,
+        "cspDomainManagement": true,
+        "cspDomainUsage": true,
+        "manageSpecialAccounts": true,
+        "protectionDomainManagement": true,
+        "systemManagement": true,
+        "userManagement": true
+    }
+}

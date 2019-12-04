@@ -1,0 +1,295 @@
+{{/* Copyright Tad Lebeck 2019 */ -}}
+# Managed cluster deployment YAML template.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nuvoloso-cluster
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: nuvoloso-tls
+  namespace: nuvoloso-cluster
+type: Opaque
+data:
+  caCert: {{.CACert}}
+  agentdCert: {{.AgentdCert}}
+  agentdKey: {{.AgentdKey}}
+  clusterdCert: {{.ClusterdCert}}
+  clusterdKey: {{.ClusterdKey}}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: clusterd
+  namespace: nuvoloso-cluster
+  labels:
+    app: nuvoloso-clusterd-service
+spec:
+  ports:
+  - port: 7443
+    name: clusterd-port
+  selector:
+    app: nuvoloso-clusterd
+  type:
+    ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nuvoloso-agent-account
+  namespace: nuvoloso-cluster
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nuvoloso-cluster-account
+  namespace: nuvoloso-cluster
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-agent-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "update"]
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-cluster-clusterrole
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create"]
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "update"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumeattachments"]
+    verbs: ["get", "list", "watch", "update"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-agent-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: nuvoloso-agent-account
+    namespace: nuvoloso-cluster
+roleRef:
+  kind: ClusterRole
+  name: nuvoloso-agent-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: nuvoloso-cluster-clusterrolebinding
+subjects:
+  - kind: ServiceAccount
+    name: nuvoloso-cluster-account
+    namespace: nuvoloso-cluster
+roleRef:
+  kind: ClusterRole
+  name: nuvoloso-cluster-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: nuvoloso-node
+  namespace: nuvoloso-cluster
+spec:
+  selector:
+    matchLabels:
+      app: nuvoloso-node
+  template:
+    metadata:
+      labels:
+        app: nuvoloso-node
+    spec:
+      serviceAccountName: nuvoloso-agent-account
+      initContainers:
+      - name: init-fv
+        image: 407798037446.dkr.ecr.us-west-2.amazonaws.com/nuvoloso/nuvo_fv:{{.ImageTag}}
+        imagePullPolicy: Always
+        env:
+        - name: VOLUME_PLUGIN_PATH
+          value: "/kvd"
+        - name: MANAGEMENT_SOCK
+          value: "/var/run/nuvoloso/nvagentd.sock"
+        command: ["/opt/nuvoloso/bin/nuvo_installer.sh"]
+        volumeMounts:
+        - name: nuvoloso-fv
+          mountPath: /kvd
+      containers:
+      - name: agentd
+        image: 407798037446.dkr.ecr.us-west-2.amazonaws.com/nuvoloso/nvagentd:{{.ImageTag}}
+        ports:
+        - containerPort: 443
+        args: ["-M", "{{.ManagementHost}}", "-D", "{{.CSPDomainID}}", "-T", "{{.CSPDomainType}}", "-S", "{{.SystemID}}", "-C", "{{.ClusterID}}", "--nuvo-port", "{{.NuvoPort}}", "--permissive", "--debug-client", "--debug-permit-rei", "--vreq.debug-permit-rei" ]
+        imagePullPolicy: Always
+        env:
+        - name: NUVO_FV_INI
+          value: "/kvd/nuvoloso.com~nuvo/nuvo.ini"
+        - name: NUVO_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NUVO_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NUVO_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NUVO_POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        - name: NUVO_NODE_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: spec.nodeName
+        volumeMounts:
+        - name: tls
+          mountPath: "/etc/nuvoloso/tls"
+          readOnly: true
+        - name: nuvoloso-run
+          mountPath: /var/run/nuvoloso
+        - name: nuvoloso-local
+          mountPath: /var/local/nuvoloso
+          mountPropagation: HostToContainer
+        - name: nuvoloso-fv
+          mountPath: /kvd
+        - name: host-devices
+          mountPath: /dev
+        securityContext:
+          privileged: true
+      - name: nuvo
+        image: 407798037446.dkr.ecr.us-west-2.amazonaws.com/nuvoloso/nuvo:{{.ImageTag}}
+        ports:
+        - containerPort: {{.NuvoPort}}
+        # caution: --nuvo-core-dir modifies the host so use during development only
+        args: [ "--nuvo-core-dir", "/var/crash", "--nuvo-cleanup", "/var/local/nuvoloso/luns" ]
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: nuvoloso-run
+          mountPath: /var/run/nuvoloso
+        - name: nuvoloso-local
+          mountPath: /var/local/nuvoloso
+          mountPropagation: Bidirectional
+        - name: host-devices
+          mountPath: /dev
+        - name: host-crash
+          mountPath: /var/crash
+        securityContext:
+          privileged: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: nuvoloso-tls
+      - name: nuvoloso-fv
+        hostPath:
+          path: /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+      - name: nuvoloso-run
+        hostPath:
+          path: /var/run/nuvoloso
+      - name: nuvoloso-local
+        hostPath:
+          path: /var/local/nuvoloso
+      - name: host-devices
+        hostPath:
+          path: /dev
+      - name: host-crash
+        hostPath:
+          path: /var/crash
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: clusterd
+  namespace: nuvoloso-cluster
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nuvoloso-clusterd
+  serviceName: clusterd
+  template:
+    metadata:
+      labels:
+        app: nuvoloso-clusterd
+    spec:
+      serviceAccountName: nuvoloso-cluster-account
+      containers:
+      - name: clusterd
+        image: 407798037446.dkr.ecr.us-west-2.amazonaws.com/nuvoloso/nvclusterd:{{.ImageTag}}
+        args: ["-M", "{{.ManagementHost}}", "-D", "{{.CSPDomainID}}", "-T", "{{.CSPDomainType}}", "-S", "{{.SystemID}}", "-C", "{{.ClusterID}}", "--permissive", "--debug-client", "--debug-permit-rei", "--vreq.debug-permit-rei" ]
+        env:
+        - name: NUVO_CLUSTER_NAME
+          value: "{{.ClusterName}}"
+        - name: NUVO_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: NUVO_POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: NUVO_POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: NUVO_POD_UID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.uid
+        ports:
+        - containerPort: 7443
+          name: clusterd-port
+        imagePullPolicy: Always
+        volumeMounts:
+        - name: tls
+          mountPath: "/etc/nuvoloso/tls"
+          readOnly: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: nuvoloso-tls

@@ -1,0 +1,10 @@
+FROM ubuntu:18.04
+WORKDIR /root
+RUN apt-get update && apt-get install -y ca-certificates less python2.7-minimal
+COPY deploy/bin/nvcentrald deploy/bin/nvctl deploy/bin/nvclmd deploy/bin/nvgcp deploy/bin/copy deploy/bin/cluster_delete.py /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nvcentrald /opt/nuvoloso/bin/nvctl /opt/nuvoloso/bin/nvclmd /opt/nuvoloso/bin/nvgcp /opt/nuvoloso/bin/copy /opt/nuvoloso/bin/cluster_delete.py && mkdir -p /var/run/nuvoloso
+COPY deploy/centrald/etc/nuvoloso/nvcentrald.ini deploy/centrald/etc/nuvoloso/nvctl.config /etc/nuvoloso/
+COPY deploy/centrald/lib /opt/nuvoloso/lib/
+ENV NVCTL_CONFIG_FILE=/etc/nuvoloso/nvctl.config
+EXPOSE 8443
+ENTRYPOINT [ "/opt/nuvoloso/bin/nvcentrald" ]

@@ -1,0 +1,57 @@
+{
+  "state": "PUBLISHED",
+  "description": "Online Archive: large amounts of data that are infrequently accessed",
+  "name": "Online Archive",
+  "ioProfile": {
+    "ioPattern": {
+      "name": "sequential",
+      "minSizeBytesAvg" : 16384,
+      "maxSizeBytesAvg": 65536
+    },
+    "readWriteMix": {
+      "name": "write-mostly",
+      "minReadPercent": 0,
+      "maxReadPercent": 30
+    }
+  },
+  "slos": {
+    "Response Time Average": {
+      "kind": "DURATION",
+      "value": "50ms",
+      "immutable": true
+    },
+    "Response Time Maximum": {
+      "kind": "DURATION",
+      "value": "2s",
+      "immutable": true
+    },
+    "Availability": {
+      "kind": "PERCENTAGE",
+      "value": "99.999%",
+      "immutable": true
+    },
+    "Security": {
+      "kind": "STRING",
+      "value": "Encrypted",
+      "immutable": true
+    },
+    "RPO": {
+      "kind": "DURATION",
+      "value": "4h",
+      "immutable": true
+    },
+    "Retention": {
+      "kind": "DURATION",
+      "value": "90d",
+      "immutable": true
+    }
+  },
+  "provisioningUnit": {
+    "IOPS": 1,
+    "Throughput": 0
+  },
+  "volumeSeriesMinMaxSize": {
+    "minSizeBytes": 1073741824,
+    "maxSizeBytes": 70368744177664
+  }
+}

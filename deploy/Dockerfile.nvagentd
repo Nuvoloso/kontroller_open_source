@@ -1,0 +1,11 @@
+FROM ubuntu:18.04
+# This image depends on the existence of Linux utilities fsck, mkfs (ext4, xfs), lsblk, blkid and nvme being installed in the path. That is true for ubuntu after the apt-get install below.
+# "lsblk -J -b" must work, though full knowledge of mount points is not required. blkid and nvme must also work.
+# Containers using this image must be privileged and have full access to /dev.
+WORKDIR /root
+RUN apt-get update && apt-get install -y ca-certificates less nvme-cli util-linux xfsprogs
+COPY deploy/bin/nuvo_vm deploy/bin/nvagentd deploy/bin/copy deploy/bin/catalog deploy/bin/nvclmd deploy/bin/nvaws deploy/bin/nvgcp deploy/bin/mountfs /opt/nuvoloso/bin/
+RUN chmod +x /opt/nuvoloso/bin/nuvo_vm /opt/nuvoloso/bin/nvagentd /opt/nuvoloso/bin/copy /opt/nuvoloso/bin/catalog /opt/nuvoloso/bin/nvclmd /opt/nuvoloso/bin/nvaws /opt/nuvoloso/bin/nvgcp /opt/nuvoloso/bin/mountfs && mkdir -p /var/run/nuvoloso
+COPY deploy/agentd/etc/nuvoloso/nvagentd.ini /etc/nuvoloso/
+EXPOSE 443
+ENTRYPOINT [ "/opt/nuvoloso/bin/nvagentd" ]
